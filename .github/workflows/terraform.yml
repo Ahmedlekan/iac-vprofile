@@ -60,6 +60,10 @@ jobs:
       if: steps.plan.outcome == 'failure'
       run: exit 1
     
+    - name: Terraform Show Plan
+      if: steps.plan.outcome == 'success'
+      run: terraform show -no-color planfile
+    
     # - name: Terraform Apply
     #   id: apply
     #   run: terraform apply -auto-approve planfile
