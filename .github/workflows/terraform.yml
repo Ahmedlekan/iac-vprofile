@@ -60,15 +60,134 @@ jobs:
       if: steps.plan.outcome == 'failure'
       run: exit 1
     
-    - name: Terraform Show Plan
-      if: steps.plan.outcome == 'success'
-      run: terraform show -no-color planfile
+    - name: Terraform Apply
+      id: apple
+      if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+      run: terraform apply -auto-approve -input=false -parallelism=1 planfile
     
-    # - name: Terraform Apply
-    #   id: apply
-    #   run: terraform apply -auto-approve planfile
-    #   continue-on-error: true
-    
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+        
+    - name: get kube config
+      id: kubeconfig
+      if: steps.apple.outcome == 'success'
+      run: aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER }} --region ${{ env.AWS_REGION }}
+        
+    - name: Install Ingress Controller
+      if: steps.apple.outcome == 'success' && steps.kubeconfig.outcome == 'success'
+      run: kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.1.3/deploy/static/provider/aws/deploy.yaml
+        
+
+
+
+# ------------------------
+# GitHub Actions Workflow: CI/CD Pipeline for Terraform + EKS
+# ------------------------
+
+# name: CI/CD Pipeline    # Workflow name shown in GitHub Actions UI
+
+# on:                    # Events that trigger the workflow
+#   push:                # Trigger on push events
+#     branches:
+#       - main           # Only when pushing to main branch
+#       - stage          # Or pushing to stage branch
+#     paths:
+#       - terraform/**   # But only if files inside terraform/ folder change
+#   pull_request:        # Also trigger on pull requests
+#     branches:
+#       - main           # For PRs targeting the main branch
+#     paths:
+#       - terraform/**   # Only when PR modifies terraform/ folder
+
+# env:                   # Global environment variables (available to all jobs)
+#   AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}   # AWS access key (from secrets)
+#   AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }} # AWS secret key (from secrets)
+#   AWS_REGION: us-east-1           # Default AWS region
+#   BUCKET_TF_STATE: ${{ secrets.BUCKET_TF_STATE }}       # S3 bucket for Terraform state
+#   EKS_CLUSTER: vprofile-eks       # Name of the EKS cluster
+
+# jobs:                  # Start of job definitions
+#   terraform:           # Job identifier
+#     name: Apply Terraform Code Changes   # Friendly job name
+#     runs-on: ubuntu-latest               # Run job on latest Ubuntu runner
+
+#     defaults:           # Default execution settings
+#       run:
+#         shell: bash     # Use bash shell for commands
+#         working-directory: ./terraform   # Change working directory to terraform/
+
+#     steps:              # Ordered list of steps for this job
+
+#     - name: Checkout source code   # Step 1: fetch source code
+#       uses: actions/checkout@v5    # Official GitHub action to checkout repository
+
+#     - name: Set up Terraform       # Step 2: install Terraform
+#       uses: hashicorp/setup-terraform@v3  # HashiCorp setup action
+#       with:
+#           terraform_version: 1.6.3  # Install Terraform version 1.6.3
+
+#     - name: Terraform Init          # Step 3: initialize Terraform backend
+#       id: init                      # Step ID = init
+#       run: terraform init \
+#         -backend-config="bucket=${BUCKET_TF_STATE}" \
+#         -backend-config="region=${AWS_REGION}" \
+#         -backend-config="key=terraform.tfstate"
+#       # Configure remote backend using S3 bucket + region + state file key
+
+#     - name: Terraform fmt           # Step 4: check code formatting
+#       id: fmt
+#       run: terraform fmt -check     # Ensures Terraform code is properly formatted
+
+#     - name: Terraform Validate      # Step 5: validate Terraform configuration
+#       id: validate
+#       run: terraform validate       # Verifies Terraform files are syntactically valid
+
+#     - name: Terraform Plan          # Step 6: create an execution plan
+#       id: plan
+#       run: terraform plan -no-color -input=false -out=planfile
+#       # -no-color → no ANSI colors (better logs)
+#       # -input=false → disables interactive prompts
+#       # -out=planfile → saves plan into a file
+#       continue-on-error: true       # Don’t fail workflow immediately if plan fails
+
+#     - name: terraform plan status   # Step 7: handle plan failure explicitly
+#       if: steps.plan.outcome == 'failure'  # Only run if plan step failed
+#       run: exit 1                   # Exit with failure to mark job failed
+
+#     - name: Terraform Apply         # Step 8: apply Terraform changes
+#       id: apple                     # Step ID (typo? should be "apply", but valid)
+#       if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+#       # Only apply if workflow triggered by direct push to main
+#       run: terraform apply -auto-approve -input=false -parallelism=1 planfile
+#       # -auto-approve → skip manual approval
+#       # -input=false → don’t prompt user for input
+#       # -parallelism=1 → apply resources sequentially
+#       # planfile → use saved plan from previous step
+
+#     - name: Configure AWS Credentials   # Step 9: set AWS credentials for CLI & kubectl
+#       uses: aws-actions/configure-aws-credentials@v4
+#       with:
+#         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}     # Provide AWS access key
+#         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }} # Provide AWS secret
+#         aws-region: ${{ env.AWS_REGION }}                       # Set default region
+
+#     - name: get kube config         # Step 10: configure kubectl for EKS cluster
+#       id: kubeconfig
+#       if: steps.apple.outcome == 'success'  # Only run if Terraform apply succeeded
+#       run: aws eks update-kubeconfig \
+#         --name ${{ env.EKS_CLUSTER }} \
+#         --region ${{ env.AWS_REGION }}
+#       # Downloads EKS cluster kubeconfig so kubectl can connect
+
+#     - name: Install Ingress Controller    # Step 11: deploy NGINX ingress controller
+#       if: steps.apple.outcome == 'success' && if steps.kubeconfig.outcome == 'success'
+#       # Only run if Terraform apply and kubeconfig setup were successful
+#       run: kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.1.3/deploy/static/provider/aws/deploy.yaml
+#       # Installs ingress-nginx controller into the EKS cluster
 
 
    
